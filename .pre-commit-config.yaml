@@ -1,0 +1,52 @@
+exclude: '^(docs/conf.py|.vscode/settings.json)'
+
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v4.5.0
+  hooks:
+    - id: destroyed-symlinks
+    - id: check-added-large-files
+    #   args: ['--maxkb=5120']
+    - id: check-case-conflict
+    - id: check-executables-have-shebangs
+    - id: check-shebang-scripts-are-executable
+    - id: check-merge-conflict
+    - id: detect-private-key
+    - id: check-ast
+    - id: check-json
+    - id: check-toml
+    - id: check-xml
+    - id: check-yaml
+    - id: trailing-whitespace
+    - id: debug-statements
+    - id: mixed-line-ending
+      args: ['--fix=auto'] # replace 'auto' with 'lf' to enforce Linux/Mac line endings or 'crlf' for Windows
+
+- repo: https://github.com/pycqa/isort
+  rev: 5.13.2
+  hooks:
+    - id: isort
+
+## If you want to avoid flake8 errors due to unused vars or imports:
+# - repo: https://github.com/myint/autoflake
+#   rev: v1.4
+#   hooks:
+#     - id: autoflake
+#       args: [
+#         --in-place,
+#         --remove-all-unused-imports,
+#         --remove-unused-variables,
+#       ]
+
+## regex-based linting
+# - repo: https://github.com/codingjoe/relint
+#   rev: 1.2.1
+#   hooks:
+#     - id: relint
+
+## flake8 linting
+# - repo: https://github.com/PyCQA/flake8
+#   rev: 4.0.1
+#   hooks:
+#     - id: flake8
+#       # additional_dependencies: [flake8-bugbear]
