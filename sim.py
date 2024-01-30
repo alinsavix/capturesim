@@ -14,7 +14,7 @@ from tdvutil.argparse import CheckFile
 from xopen import xopen
 
 TESTFILE = "pmcap-Heaven.exe-uncapped-240117-083918.csv"
-OBS_FPS = 600.0
+OBS_FPS = 60.0
 OBS_FRAMETIME_MS = 1000.0 / OBS_FPS
 
 gametime_ms = 0.0
@@ -111,6 +111,7 @@ class OBS:
     last_composite_framenum: int = -1
     last_composite_t_ms: float = 0.0
     last_capture_frame: Optional[GameFrame] = None
+    composited_framelist: List[GameFrame] = []
 
     def __init__(self, fps: float) -> None:
         self.composite_interval_ms = 1000.0 / fps
@@ -119,32 +120,40 @@ class OBS:
         return self.last_composite_t_ms + self.composite_interval_ms
 
     def composite(self, frame: GameFrame) -> bool:
-        if frame.disposition != Disp.CAPTURED:
-            print(f"WARNING: composite() called on non-captured frame: {frame.present_frame} @ {frame.present_t_ms}", file=sys.stderr)
+        if frame.disposition not in [Disp.CAPTURED, Disp.COMPOSITED, Disp.COMPOSITED_DUP]:
+            print(
+                f"WARNING: composite() called on non-captured frame: {frame.present_frame} @ {frame.present_t_ms} ({frame.disposition})", file=sys.stderr)
             return False
 
-        # Check if it's actually time to composite. If so, composite the
-        # previously captured frame. If there wasn't one, emit a warning.
-        # We should handle this better.
-        if frame.present_t_ms > self.next_composite_time():
-            if self.last_capture_frame is None:
-                print(f"WARNING: compositor duplicating compositor frame {self.last_composite_framenum} @ {self.next_composite_time()}", file=sys.stderr)
-            else:
-                self.last_capture_frame.disposition = Disp.COMPOSITED
-                self.last_capture_frame.composite_frame = self.last_composite_framenum + 1
-                self.last_capture_frame.composite_t_ms = self.next_composite_time()
+        # We depend on the caller to make sure it's actually *time* to composite.
+        # This may or may not be a good idea.
+        #
+        # Take the provided frame and copy the bits to use as the entry in our
+        # composited frame list.
+        fakeframe = GameFrame(**frame.__dict__)
+        fakeframe.composite_frame = self.last_composite_framenum + 1
+        fakeframe.composite_t_ms = self.next_composite_time()
+        fakeframe.disposition = Disp.COMPOSITED
 
-            self.last_composite_framenum += 1
-            self.last_composite_t_ms = self.next_composite_time()
+        # mark the original frame as composited
+        frame.composite_frame = self.last_composite_framenum + 1
+        frame.composite_t_ms = self.next_composite_time()
 
+        if self.last_capture_frame is not None and frame.present_frame == self.last_capture_frame.present_frame:
+            # duplicate frame, mark it in both the frame passed in, and the
+            # frame stored in the composited frame list
+            frame.disposition = Disp.COMPOSITED_DUP
+            fakeframe.disposition = Disp.COMPOSITED_DUP
+        else:
+            # new frame, not a dup
+            frame.disposition = Disp.COMPOSITED
+
+        self.composited_framelist.append(fakeframe)
         self.last_capture_frame = frame
-        # # alright, so things seem ok?
-        # frame.disposition = Disp.COMPOSITED
-        # frame.composite_frame = self.last_composite_framenum + 1
-        # frame.composite_t_ms = self.next_composite_time()
 
-        # self.last_composite_framenum = frame.composite_frame
-        # self.last_composite_t_ms = frame.composite_t_ms
+        # move ourself one composite frame forward
+        self.last_composite_framenum += 1
+        self.last_composite_t_ms = self.next_composite_time()
 
         return True
 
@@ -173,7 +182,6 @@ def main(argv: List[str]) -> int:
 
     presented_framelist: List[GameFrame] = []
     captured_framelist: List[GameFrame] = []
-    composited_framelist: List[GameFrame] = []
     last_captured: Optional[GameFrame] = None
 
     obs = OBS(OBS_FPS)
@@ -188,13 +196,13 @@ def main(argv: List[str]) -> int:
         # simulates having the compositor run on a timer without having to
         # call it for every single game frame just to have it reject most of
         # them
-        if frame.present_t_ms > obs.next_composite_time() and last_captured is not None:
-            obs.composite(last_captured)
-            last_captured = None
+        if last_captured is not None:
+            while frame.present_t_ms > obs.next_composite_time():
+                obs.composite(last_captured)
 
         captured = gc.capture(frame)
         if captured:
-            obs.composite(frame)
+            last_captured = frame
             captured_framelist.append(frame)
 
         presented_framelist.append(frame)
@@ -204,7 +212,9 @@ def main(argv: List[str]) -> int:
     for frame in presented_framelist:
         if frame.disposition == Disp.COMPOSITED:
             dispstr = f"CAPTURED + COMPOSITED @ otime {frame.composite_t_ms:0.3f}ms"
-            composited_framelist.append(frame)
+            # composited_framelist.append(frame)
+        elif frame.disposition == Disp.COMPOSITED_DUP:
+            dispstr = f"CAPTURED + COMPOSITED (DUPS) @ otime {frame.composite_t_ms:0.3f}ms"
         else:
             dispstr = frame.disposition.name
         print(f"pframe {frame.present_frame} @ {frame.present_t_ms:0.3f}ms, {dispstr}")
@@ -215,7 +225,7 @@ def main(argv: List[str]) -> int:
     gaplist_frames = []
     gaplist_times = []
 
-    for frame in composited_framelist:
+    for frame in obs.composited_framelist:
         frame_gap = frame.present_frame - prev_present_frame
         prev_present_frame = frame.present_frame
         time_gap = frame.present_t_ms - prev_present_time
@@ -224,24 +234,28 @@ def main(argv: List[str]) -> int:
         gaplist_frames.append(frame_gap)
         gaplist_times.append(time_gap)
 
-        print(f"oframe {frame.composite_frame} @ {frame.composite_t_ms:0.3f}ms, pframe {frame.present_frame} @ {frame.present_t_ms:0.3f}ms, gap {frame_gap} frames, {time_gap:0.3f}ms")
+        dupstr = " DUP" if frame.disposition == Disp.COMPOSITED_DUP else ""
+
+        print(f"oframe {frame.composite_frame} @ {frame.composite_t_ms:0.3f}ms, pframe {frame.present_frame} @ {frame.present_t_ms:0.3f}ms, gap {frame_gap} frames, {time_gap:0.3f}ms{dupstr}")
 
     print("\n\n===== STATS =====")
     print(f"Presented frames: {len(presented_framelist)}")
     print(f"Captured frames: {len(captured_framelist)}")
-    print(f"Composited/output frames: {len(composited_framelist)}")
+    print(f"Composited/output frames: {len(obs.composited_framelist)}")
 
     g_avg = statistics.median(gaplist_frames)
     g_min = min(gaplist_frames)
     g_max = max(gaplist_frames)
     g_stddev = statistics.stdev(gaplist_frames)
-    print(f"\nFrame number gaps: {g_avg:0.2f} avg, {g_min} min, {g_max} max, {g_stddev:0.2f} stddev")
+    print(
+        f"\nFrame number gaps: {g_avg:0.2f} avg, {g_min} min, {g_max} max, {g_stddev:0.2f} stddev")
 
     g_avg = statistics.median(gaplist_times)
     g_min = min(gaplist_times)
     g_max = max(gaplist_times)
     g_stddev = statistics.stdev(gaplist_times)
-    print(f"Frame time gaps: {g_avg:0.3f} avg, {g_min:0.3f} min, {g_max:0.3f} max, {g_stddev:0.3f} stddev")
+    print(
+        f"Frame time gaps: {g_avg:0.3f} avg, {g_min:0.3f} min, {g_max:0.3f} max, {g_stddev:0.3f} stddev")
 
     return 0
 
