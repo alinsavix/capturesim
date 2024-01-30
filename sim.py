@@ -240,7 +240,7 @@ def main(argv: List[str]) -> int:
 
     print("\n\n===== STATS =====")
     print(f"Presented frames: {len(presented_framelist)}")
-    print(f"Captured frames: {len(captured_framelist)}")
+    print(f"Captured frames: {len(captured_framelist)} ({len(captured_framelist) - len(obs.composited_framelist)} unused)")
     print(f"Composited/output frames: {len(obs.composited_framelist)}")
 
     g_avg = statistics.median(gaplist_frames)
