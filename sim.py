@@ -171,8 +171,14 @@ def parse_args(args: List[str]) -> argparse.Namespace:
         help="use specified PresentMon capture file as pframe source",
     )
 
-    return parser.parse_args(args)
+    parser.add_argument(
+        "--capture-ratio", "--cr",
+        type=float,
+        default=None,
+        help="capture no more than [this ratio] * [OBS FPS] times per second, loosely speaking (set to 0 for no limit)",
+    )
 
+    return parser.parse_args(args)
 
 def main(argv: List[str]) -> int:
     args = parse_args(argv)
@@ -185,7 +191,12 @@ def main(argv: List[str]) -> int:
     last_captured: Optional[GameFrame] = None
 
     obs = OBS(OBS_FPS)
-    gc = GameCapture(obs.composite_interval_ms / 2)
+    if args.capture_ratio is None:
+        gc = GameCapture(obs.composite_interval_ms / 2)
+    elif args.capture_ratio == 0:
+        gc = GameCapture(0)
+    else:
+        gc = GameCapture(obs.composite_interval_ms / args.capture_ratio)
 
     print(f"Data from: '{args.presentmon_file}'\nComposite rate {OBS_FPS}fps\n")
 
