@@ -230,16 +230,17 @@ def main(argv: List[str]) -> int:
 
 
     # we're done, print some stuff
-    frame_detail_print("===== PRESENTED FRAMES =====")
-    for frame in presented_framelist:
-        if frame.disposition == Disp.COMPOSITED:
-            dispstr = f"CAPTURED + COMPOSITED @ otime {frame.composite_t_ms:0.3f}ms"
-            # composited_framelist.append(frame)
-        elif frame.disposition == Disp.COMPOSITED_DUP:
-            dispstr = f"CAPTURED + COMPOSITED (DUPS) @ otime {frame.composite_t_ms:0.3f}ms"
-        else:
-            dispstr = frame.disposition.name
-        frame_detail_print(f"pframe {frame.present_frame} @ {frame.present_t_ms:0.3f}ms, {dispstr}")
+    if not args.stats_only:
+        print("===== PRESENTED FRAMES =====")
+        for frame in presented_framelist:
+            if frame.disposition == Disp.COMPOSITED:
+                dispstr = f"CAPTURED + COMPOSITED @ otime {frame.composite_t_ms:0.3f}ms"
+                # composited_framelist.append(frame)
+            elif frame.disposition == Disp.COMPOSITED_DUP:
+                dispstr = f"CAPTURED + COMPOSITED (DUPS) @ otime {frame.composite_t_ms:0.3f}ms"
+            else:
+                dispstr = frame.disposition.name
+            print(f"pframe {frame.present_frame} @ {frame.present_t_ms:0.3f}ms, {dispstr}")
 
     frame_detail_print("\n\n===== OUTPUT/COMPOSITED FRAMES =====")
     prev_present_frame = 0
