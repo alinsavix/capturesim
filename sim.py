@@ -171,8 +171,21 @@ def parse_args(args: List[str]) -> argparse.Namespace:
         help="use specified PresentMon capture file as pframe source",
     )
 
-    return parser.parse_args(args)
+    parser.add_argument(
+        "--capture-ratio", "--cr",
+        type=float,
+        default=2,
+        help="capture no more than [this ratio] * [OBS FPS] times per second, loosely speaking (set to 0 for no limit)",
+    )
 
+    parser.add_argument(
+        "--stats-only", "--silent", "-s",
+        default=False,
+        action="store_true",
+        help="print only the statistics, not the presented or captured frame info",
+    )
+
+    return parser.parse_args(args)
 
 def main(argv: List[str]) -> int:
     args = parse_args(argv)
@@ -185,7 +198,10 @@ def main(argv: List[str]) -> int:
     last_captured: Optional[GameFrame] = None
 
     obs = OBS(OBS_FPS)
-    gc = GameCapture(obs.composite_interval_ms / 2)
+    if args.capture_ratio == 0:
+        gc = GameCapture(0)
+    else:
+        gc = GameCapture(obs.composite_interval_ms / args.capture_ratio)
 
     print(f"Data from: '{args.presentmon_file}'\nComposite rate {OBS_FPS}fps\n")
 
@@ -207,19 +223,26 @@ def main(argv: List[str]) -> int:
 
         presented_framelist.append(frame)
 
-    # we're done, print some stuff
-    print("===== PRESENTED FRAMES =====")
-    for frame in presented_framelist:
-        if frame.disposition == Disp.COMPOSITED:
-            dispstr = f"CAPTURED + COMPOSITED @ otime {frame.composite_t_ms:0.3f}ms"
-            # composited_framelist.append(frame)
-        elif frame.disposition == Disp.COMPOSITED_DUP:
-            dispstr = f"CAPTURED + COMPOSITED (DUPS) @ otime {frame.composite_t_ms:0.3f}ms"
-        else:
-            dispstr = frame.disposition.name
-        print(f"pframe {frame.present_frame} @ {frame.present_t_ms:0.3f}ms, {dispstr}")
+    # Don't print frame details in stats-only/silent mode
+    def frame_detail_print(*fargs):
+        if not args.stats_only:
+            print(*fargs)
 
-    print("\n\n===== OUTPUT/COMPOSITED FRAMES =====")
+
+    # we're done, print some stuff
+    if not args.stats_only:
+        print("===== PRESENTED FRAMES =====")
+        for frame in presented_framelist:
+            if frame.disposition == Disp.COMPOSITED:
+                dispstr = f"CAPTURED + COMPOSITED @ otime {frame.composite_t_ms:0.3f}ms"
+                # composited_framelist.append(frame)
+            elif frame.disposition == Disp.COMPOSITED_DUP:
+                dispstr = f"CAPTURED + COMPOSITED (DUPS) @ otime {frame.composite_t_ms:0.3f}ms"
+            else:
+                dispstr = frame.disposition.name
+            print(f"pframe {frame.present_frame} @ {frame.present_t_ms:0.3f}ms, {dispstr}")
+
+    frame_detail_print("\n\n===== OUTPUT/COMPOSITED FRAMES =====")
     prev_present_frame = 0
     prev_present_time = 0.0
     gaplist_frames = []
@@ -236,7 +259,7 @@ def main(argv: List[str]) -> int:
 
         dupstr = " DUP" if frame.disposition == Disp.COMPOSITED_DUP else ""
 
-        print(f"oframe {frame.composite_frame} @ {frame.composite_t_ms:0.3f}ms, pframe {frame.present_frame} @ {frame.present_t_ms:0.3f}ms, gap {frame_gap} frames, {time_gap:0.3f}ms{dupstr}")
+        frame_detail_print(f"oframe {frame.composite_frame} @ {frame.composite_t_ms:0.3f}ms, pframe {frame.present_frame} @ {frame.present_t_ms:0.3f}ms, gap {frame_gap} frames, {time_gap:0.3f}ms{dupstr}")
 
     print("\n\n===== STATS =====")
     print(f"Presented frames: {len(presented_framelist)}")
