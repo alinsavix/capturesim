@@ -174,7 +174,7 @@ def parse_args(args: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--capture-ratio", "--cr",
         type=float,
-        default=None,
+        default=2,
         help="capture no more than [this ratio] * [OBS FPS] times per second, loosely speaking (set to 0 for no limit)",
     )
 
@@ -198,9 +198,7 @@ def main(argv: List[str]) -> int:
     last_captured: Optional[GameFrame] = None
 
     obs = OBS(OBS_FPS)
-    if args.capture_ratio is None:
-        gc = GameCapture(obs.composite_interval_ms / 2)
-    elif args.capture_ratio == 0:
+    if args.capture_ratio == 0:
         gc = GameCapture(0)
     else:
         gc = GameCapture(obs.composite_interval_ms / args.capture_ratio)
