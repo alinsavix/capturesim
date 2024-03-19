@@ -8,7 +8,7 @@ import statistics
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Generator, List, Optional, Tuple, Union
+from typing import Generator, List, Optional, Protocol, Tuple, Union
 
 from tdvutil.argparse import CheckFile
 from xopen import xopen
@@ -43,7 +43,11 @@ class GameFrame:
     disposition: Disp = Disp.UNKNOWN
 
 
-class FrameStream:
+class FrameStream(Protocol):
+    def getframes(self) -> Generator[GameFrame, None, None]:
+        raise NotImplementedError()
+
+class PresentMonCapture(FrameStream):
     filename: Path
     reader: Optional[csv.DictReader] = None
     gametime_ms: float = 0.0  # FIXME: Can we just keep this state in getframes?
@@ -67,10 +71,13 @@ class FrameStream:
                 disposition=Disp.UNKNOWN,
             )
 
+class GameCapture(Protocol):
+    def capture(self, frame: GameFrame) -> bool:
+        raise NotImplementedError()
 
 # FIXME: Right now this just modifies frames in-place where needed, rather
 # than returning an updated one. This may or may not be the right interface
-class GameCapture:
+class StockGameCapture(GameCapture):
     last_capture_frame: int = -1
     last_capture_ms: float = 0.0  # last frame captured
     game_time_ms: float = 0.0  # current game timestamp (last frame seen)
@@ -106,15 +113,34 @@ class GameCapture:
         return True
 
 
-class OBS:
+class Compositor(Protocol):
+    # This is likely to be pretty standard, can we just implement it in the
+    # base class?
+    def composited_framelist(self) -> List[GameFrame]:
+        raise NotImplementedError()
+
+    def next_composite_time(self) -> float:
+        raise NotImplementedError()
+
+    def composite(self, frame: GameFrame) -> bool:
+        raise NotImplementedError()
+
+    # def thing(self) -> None: ...
+
+
+class StockOBSCompositor(Compositor):
     composite_interval_ms: float
     last_composite_framenum: int = -1
     last_composite_t_ms: float = 0.0
     last_capture_frame: Optional[GameFrame] = None
-    composited_framelist: List[GameFrame] = []
+    _composited_framelist: List[GameFrame] = []
 
     def __init__(self, fps: float) -> None:
         self.composite_interval_ms = 1000.0 / fps
+
+    @property
+    def composited_framelist(self) -> List[GameFrame]:
+        return self._composited_framelist
 
     def next_composite_time(self) -> float:
         return self.last_composite_t_ms + self.composite_interval_ms
@@ -148,7 +174,7 @@ class OBS:
             # new frame, not a dup
             frame.disposition = Disp.COMPOSITED
 
-        self.composited_framelist.append(fakeframe)
+        self._composited_framelist.append(fakeframe)
         self.last_capture_frame = frame
 
         # move ourself one composite frame forward
@@ -197,15 +223,15 @@ def main(argv: List[str]) -> int:
     captured_framelist: List[GameFrame] = []
     last_captured: Optional[GameFrame] = None
 
-    obs = OBS(OBS_FPS)
+    obs = StockOBSCompositor(OBS_FPS)
     if args.capture_ratio == 0:
-        gc = GameCapture(0)
+        gc = StockGameCapture(0)
     else:
-        gc = GameCapture(obs.composite_interval_ms / args.capture_ratio)
+        gc = StockGameCapture(obs.composite_interval_ms / args.capture_ratio)
 
     print(f"Data from: '{args.presentmon_file}'\nComposite rate {OBS_FPS}fps\n")
 
-    framestream = FrameStream(filename=args.presentmon_file)
+    framestream = PresentMonCapture(filename=args.presentmon_file)
     for frame in framestream.getframes():
         # is this frame newer than our next expected compositor time? If so,
         # call the compositor on the frame most recently captured. This
@@ -248,7 +274,7 @@ def main(argv: List[str]) -> int:
     gaplist_frames = []
     gaplist_times = []
 
-    for frame in obs.composited_framelist:
+    for frame in obs._composited_framelist:
         frame_gap = frame.present_frame - prev_present_frame
         prev_present_frame = frame.present_frame
         time_gap = frame.present_t_ms - prev_present_time
@@ -263,8 +289,8 @@ def main(argv: List[str]) -> int:
 
     print("\n\n===== STATS =====")
     print(f"Presented frames: {len(presented_framelist)}")
-    print(f"Captured frames: {len(captured_framelist)} ({len(captured_framelist) - len(obs.composited_framelist)} unused)")
-    print(f"Composited/output frames: {len(obs.composited_framelist)}")
+    print(f"Captured frames: {len(captured_framelist)} ({len(captured_framelist) - len(obs._composited_framelist)} unused)")
+    print(f"Composited/output frames: {len(obs._composited_framelist)}")
 
     g_avg = statistics.median(gaplist_frames)
     g_min = min(gaplist_frames)
